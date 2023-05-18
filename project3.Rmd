@@ -1,0 +1,137 @@
+---
+title: "project3"
+author: "Matthew Dauber\n MD36544"
+date: "2023-04-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(interactions)
+library(sandwich)
+library(ggplot2)
+library(dslabs)
+library(dplyr)
+library(tidyverse)
+library(glue)  # for easy text formatting
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+Introduction 
+
+
+For my project 3, I picked the horror movie dataset, from the week of 2022-11-01. I chose this dataset because I am passionate about horror movies. This dataset was collected by Tanya, github username tashapiro, in October of 2021. The dataset was extracted “from The Movie Database via the tmdb API using R”(tashapiro’s horror movies readme). It contains ~35k movie records. One of my first thoughts upon looking at this dataset was running an analysis comparing English horror movies to "Asian" horror movies. I use Asian in this case to describe movies originally in Chinese, Japanese, or Korean. I know that there are other countries in this dataset that would be considered Asian, but I decided to only use those three to limit the scope of my analysis, as I feel that the majority of the foreign horror movies that I have seen were in one of those languages. 
+
+I used the original language of the movie(column original_language) to create a new variable, region, that is either Asian, English, or NA. I then used revenue and budget variables(columns revenue and budget, respectively), to create a profit variable by subtracting budget from revenue. Profit in this case is measured in USD.
+
+
+Question 
+
+How does the profitability of horror movies over time differ between Asian horror movies and English horror movies?
+
+
+Approach 
+
+To evaluate profitability over time, we fit a linear model, testing for significance in the relationship between profit, and release date. Then, we map the linear model over region, allowing us to compare the relationship between profit and release date for Asian horror movies, as compared to English ones.
+
+To visualize this relationship, we create a scatterplot(geom_point) of profit vs release date, faceted by region, with a fitted trend line(geom_smooth). This faceting lets us directly compare trends across region. 
+
+
+```{r}
+#How does the profitability of horror movies over time differ between Asian horror movies and English horror movies?
+
+
+horror_movies <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-11-01/horror_movies.csv')
+
+
+
+
+#creating secondary variables for region, and profit
+horror2 <- horror_movies %>% mutate(
+  region = case_when(
+    original_language == "en" ~ "english",
+    original_language == "cn" ~ "asian",
+    original_language == "ko" ~ "asian",
+    original_language == "ja" ~ "asian",
+    FALSE ~ NA_character_), 
+  profit = case_when(
+    ((revenue>100)&(budget>100)) ~ revenue-budget))
+
+#creating lm for each region evaluating the relationship between profit and release date
+horlm2 <- horror2 %>% drop_na(region, profit) %>% 
+  nest(data = -region) %>%
+  mutate(
+    # apply linear model to each nested data frame
+    fit = map(data, ~lm(profit ~ release_date, data = .x)),
+    glance_out = map(fit, glance)) %>%
+  select(region, glance_out) %>%
+  unnest(cols = glance_out)
+
+
+#hard coding date for plot label position
+date1<- horror2 %>% select(release_date) %>% 
+  filter(release_date=="2005-04-19") %>% 
+  slice(1) %>% 
+  pull()
+
+label_data <- horlm2 %>%
+  mutate(
+    rsqr = signif(r.squared, 2),  # round to 2 significant digits
+    pval = signif(p.value, 2),
+    model_results = glue("R^2 = {rsqr}, P = {pval}"),
+    release_date=date1, profit=9500
+  ) %>%
+  select(region, model_results, release_date, profit)
+
+horlm2 #gets table with test statistics
+
+label_data #gets table with p value and r^2 - ignore the release date and profit columns in this table
+
+```
+
+
+```{r}
+
+new_names <- c("asian"="Asian Horror Movies", "english"="English Horror Movies") #relabeling facet
+
+horror2 %>% drop_na(region, profit) %>% 
+  filter(profit >= 100) %>% #many movies in this data have no budget or no revenue, leading to odd profit values
+  ggplot(aes(release_date, profit)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, aes(color=region)) +
+  scale_color_manual(values = c("#A23C42","#5652B3")) +
+  facet_wrap(vars(region), 
+             labeller = as_labeller (new_names)) + 
+  scale_y_log10(limits=c(9500,1000000000), 
+                name="Profit", 
+                breaks=c(10000,100000,
+                         1000000,10000000,
+                         100000000,1000000000), 
+                labels=c("10 thousand","100 thousand",
+                         "1 million", "10 million", 
+                         "100 million","1 billion")) + 
+  scale_x_date(date_breaks="10 years", 
+               date_labels="%Y", 
+               name="Release Date") +
+  geom_text(
+    data = label_data, 
+    aes(label = model_results),
+    size = 10/.pt, hjust = 1  # 10pt, right-justified
+  )
+
+```
+
+Discussion
+
+My linear model resulted in a p value of 0.0000027 for English horror movies, and a p value of 0.045 for Asian horror movies. The r^2 values are 0.0245 for english horror, and 0.101 for asian horror movies. For both Asian and English horror movies, profit has a significant relationship with release date, since both p values are less than or equal to 0.05. Unfortunately, due to the setup of this analysis where I’m comparing profit vs time, it is difficult to evaluate the coefficients of the linear model. 
+
+My faceted scatterplot confirms the direct relationship between profit and release date for both regions. However, the scatterplot shows that profit for Asian horror movies is increasing faster than that of English movies. Despite this, profit for English horror movies still remains higher than that of Asian horror movies.
+One way that these results could be improved would be through a larger dataset, or a dataset with more filled out variables. ~28k of the 32k movies in this database had no information regarding their budget, or had a listed budget of 0, and had to be removed from this analysis. 
+
+
+
